@@ -1,5 +1,6 @@
 package core;
 
+import java.nio.IntBuffer;
 import java.util.List;
 
 import org.lwjgl.vulkan.*;
@@ -16,7 +17,7 @@ public class Structures {
         public VkQueue                                  graphicsQueue, 
                                                         presentQueue;
 
-        public KHRSurface                               surface;
+        public long                                     surface;
         public KHRSwapchain                             swapchain;
         public VkExtent2D                               extent;
         public VkDebugUtilsMessengerCallbackEXT         debug;
@@ -27,12 +28,17 @@ public class Structures {
     public static class QueueFamily {
         int graphicsFamily;
         int presentFamily;
+
+        public QueueFamily() {
+            graphicsFamily = -1;
+            presentFamily = -1;
+        }
     }
 
     public static class SwapchainDetails {
         public VkSurfaceCapabilitiesKHR                 capabilitiesKHR;
-        public List<VkSurfaceFormatKHR>                 formatKHR;
-        public List<Long>                               presentModeKHR;
+        public VkSurfaceFormatKHR.Buffer                formatKHR;
+        public IntBuffer                                presentModeKHR;
     }
 
     public static class PipelineCreateInformation {
