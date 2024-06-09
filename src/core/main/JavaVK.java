@@ -89,7 +89,8 @@ public class JavaVK {
         vkEnumeratePhysicalDevices(context.instance, pPhysicalDeviceCount, pPhysicalDevices);
         context.physicalDevice = Internal.findPhysicalDevice(pPhysicalDevices);
 
-
+        Internal.createDevice();
+        Internal.createSwapchain();
 
         mainloop();
     }

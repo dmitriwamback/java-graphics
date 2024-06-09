@@ -18,7 +18,7 @@ public class Structures {
                                                         presentQueue;
 
         public long                                     surface;
-        public KHRSwapchain                             swapchain;
+        public long                                     swapchain;
         public VkExtent2D                               extent;
         public VkDebugUtilsMessengerCallbackEXT         debug;
         public int                                      format;

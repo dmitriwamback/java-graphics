@@ -3,13 +3,12 @@ package core;
 import core.Structures.*;
 import core.main.JavaVK;
 
-import java.nio.Buffer;
-import java.nio.IntBuffer;
+import java.nio.*;
 import java.util.ArrayList;
 import java.util.List;
 
 import org.lwjgl.PointerBuffer;
-import org.lwjgl.system.MemoryStack;
+import org.lwjgl.glfw.GLFW;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
 import static org.lwjgl.vulkan.VK10.*;
@@ -20,16 +19,10 @@ public class Internal {
     public static QueueFamily family;
 
     public static List<VkCommandBuffer> commandBuffers;
-    public static List<Long>            imageSemaphores, renderSemaphores, inFlightFence;
-    long                                commandPool;
+    public static LongBuffer            imageSemaphores, renderSemaphores, inFlightFence;
+    public static LongBuffer            commandPool;
 
-    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
-    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
-    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
-
-    public static void initialize() {
-        //family = queryQueueFamily();
-    }
+    public static int                   IN_FLIGHT_FRAMES = 2;
 
     //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
     //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
@@ -71,25 +64,100 @@ public class Internal {
 
     public static void createSynchronizedObjects() {
         
-        Internal.imageSemaphores    = new ArrayList<Long>();
-        Internal.renderSemaphores   = new ArrayList<Long>();
-        Internal.inFlightFence      = new ArrayList<Long>();
+        Internal.imageSemaphores    = MemoryUtil.memAllocLong(IN_FLIGHT_FRAMES);
+        Internal.renderSemaphores   = MemoryUtil.memAllocLong(IN_FLIGHT_FRAMES);
+        Internal.inFlightFence      = MemoryUtil.memAllocLong(IN_FLIGHT_FRAMES);
         Internal.commandBuffers     = new ArrayList<VkCommandBuffer>();
 
-        MemoryStack stack = MemoryStack.stackPush();
-
-        VkCommandPoolCreateInfo poolCreateInfo = VkCommandPoolCreateInfo.calloc(stack)
+        VkCommandPoolCreateInfo poolCreateInfo = VkCommandPoolCreateInfo.calloc(JavaVK.stack)
             .sType$Default()
             .flags(VK10.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
             .queueFamilyIndex(family.graphicsFamily);
+
+        if (vkCreateCommandPool(JavaVK.context.device, poolCreateInfo, null, commandPool) != VK_SUCCESS) throw new RuntimeException("");
+
+        VkCommandBufferAllocateInfo commandBufferAlloc = VkCommandBufferAllocateInfo.calloc(JavaVK.stack)
+            .sType$Default()
+            .commandBufferCount(IN_FLIGHT_FRAMES)
+            .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+            .commandPool(commandPool.get(0));
+
+        PointerBuffer pCommandBuffers = MemoryUtil.memAllocPointer(IN_FLIGHT_FRAMES);
+        
+        if (vkAllocateCommandBuffers(JavaVK.context.device, commandBufferAlloc, pCommandBuffers) != VK_SUCCESS) throw new RuntimeException("");
+        for (int i = 0; i < IN_FLIGHT_FRAMES; i++) {
+            commandBuffers.set(i, new VkCommandBuffer(pCommandBuffers.get(i), JavaVK.context.device));
+        }
+
+        VkFenceCreateInfo fenceCreateInfo = VkFenceCreateInfo.calloc(JavaVK.stack)
+            .sType$Default()
+            .flags(VK_FENCE_CREATE_SIGNALED_BIT);
+        
+        VkSemaphoreCreateInfo semaphoreCreateInfo = VkSemaphoreCreateInfo.calloc(JavaVK.stack)
+            .sType$Default();
+
+        for (int i = 0; i < IN_FLIGHT_FRAMES; i++) {
+
+            if (vkCreateSemaphore(JavaVK.context.device, semaphoreCreateInfo, null, imageSemaphores)  != VK_SUCCESS ||
+                vkCreateSemaphore(JavaVK.context.device, semaphoreCreateInfo, null, renderSemaphores) != VK_SUCCESS || 
+                vkCreateFence(JavaVK.context.device, fenceCreateInfo, null, inFlightFence) != VK_SUCCESS)
+            {
+                throw new RuntimeException("");
+            }
+        }
     }
 
     //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
     //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
     //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
 
-    public static void querySwapchainSupport() {
-        
+    public static VkSurfaceFormatKHR chooseSwapchainSurface(List<VkSurfaceFormatKHR> availableFormats) {
+
+        for (VkSurfaceFormatKHR format : availableFormats) {
+            if (format.format() == VK_FORMAT_B8G8R8_SRGB && format.colorSpace() == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) return format;
+        }
+
+        return availableFormats.get(0);
+    }
+
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+
+    public static int chooseSwapchainPresentMode(IntBuffer availablePresentModes) {
+
+        for (int i = 0; i < availablePresentModes.capacity(); i++) {
+            if (availablePresentModes.get(i) == VK_PRESENT_MODE_MAILBOX_KHR) return availablePresentModes.get(i);
+        }
+
+        return availablePresentModes.get(0);
+    }
+
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+
+    public static VkExtent2D chooseSwapExtent(VkSurfaceCapabilitiesKHR capabilities) {
+
+        if (capabilities.currentExtent().width() != Integer.MAX_VALUE) return capabilities.currentExtent();
+
+        IntBuffer pWidth  = MemoryUtil.memAllocInt(1), 
+                  pHeight = MemoryUtil.memAllocInt(1);
+        GLFW.glfwGetFramebufferSize(JavaVK.context.window, pWidth, pHeight);
+
+        int width  = pWidth.get(0), 
+            height = pHeight.get(0);
+
+        if (width < capabilities.minImageExtent().width()) width = capabilities.minImageExtent().width();
+        if (width > capabilities.maxImageExtent().width()) width = capabilities.maxImageExtent().width();
+
+        if (height < capabilities.minImageExtent().height()) height = capabilities.minImageExtent().height();
+        if (height > capabilities.maxImageExtent().height()) height = capabilities.maxImageExtent().height();
+
+        VkExtent2D extent = VkExtent2D.calloc(JavaVK.stack);
+        extent.set(width, height);
+
+        return extent;
     }
 
     //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
@@ -183,5 +251,99 @@ public class Internal {
         }
 
         return pDevice;
+    }
+
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+
+    public static void createSwapchain() {
+
+        SwapchainDetails details    = querySwapchainDetails(JavaVK.context.physicalDevice);
+        VkSurfaceFormatKHR sformat  = details.formatKHR.get();
+        int pMode                   = chooseSwapchainPresentMode(details.presentModeKHR);
+        VkExtent2D extent           = chooseSwapExtent(details.capabilitiesKHR);
+
+        JavaVK.context.extent = extent;
+        JavaVK.context.format = sformat.format();
+
+        int imageCount = details.capabilitiesKHR.minImageCount() + 1;
+        if (details.capabilitiesKHR.maxImageCount() > 0 && imageCount > details.capabilitiesKHR.minImageCount()) imageCount = details.capabilitiesKHR.maxImageCount();
+
+        VkSwapchainCreateInfoKHR swapchainCreateInfo = VkSwapchainCreateInfoKHR.calloc(JavaVK.stack)
+            .sType$Default()
+            .surface(JavaVK.context.surface)
+            .minImageCount(imageCount)
+            .imageFormat(sformat.format())
+            .imageColorSpace(sformat.colorSpace())
+            .imageExtent(extent)
+            .imageArrayLayers(1)
+            .imageUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+            .imageSharingMode(VK_SHARING_MODE_EXCLUSIVE)
+            .preTransform(details.capabilitiesKHR.currentTransform())
+            .compositeAlpha(VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)
+            .presentMode(pMode)
+            .clipped(true)
+            .oldSwapchain(VK_NULL_HANDLE);
+
+        LongBuffer pSwapchain = JavaVK.stack.longs(VK_NULL_HANDLE);;
+        
+        //if (KHRSwapchain.vkCreateSwapchainKHR(JavaVK.context.device, swapchainCreateInfo, null, pSwapchain) != VK_SUCCESS) {
+        //    throw new RuntimeException("Failed to create swapchain");
+        //}
+
+        JavaVK.context.swapchain = pSwapchain.get(0);
+    }
+
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+    //--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
+
+    public static void createDevice() {
+
+        QueueFamily family = queryQueueFamily(JavaVK.context.physicalDevice);
+        VkDeviceQueueCreateInfo.Buffer queueCreateInfos = VkDeviceQueueCreateInfo.calloc(family.presentFamily - family.graphicsFamily + 1);
+
+        for (int i = family.graphicsFamily; i <= family.presentFamily; i++) {
+
+            FloatBuffer queuePriority = MemoryUtil.memAllocFloat(1);
+            queuePriority.put(1.0f);
+
+            VkDeviceQueueCreateInfo queueCreateInfo = VkDeviceQueueCreateInfo.calloc(JavaVK.stack)
+                .sType$Default()
+                .queueFamilyIndex(i)
+                .pQueuePriorities(queuePriority);
+            queueCreateInfos.put(queueCreateInfo);
+        }
+
+        String[] extensions = {
+            KHRSwapchain.VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+            "VK_KHR_portability_subset"
+        };
+
+        PointerBuffer pDeviceExtensionNames = MemoryUtil.memAllocPointer(2);
+        PointerBuffer pDeviceExtensionNameCount = MemoryUtil.memAllocPointer(1);
+
+        for (String extension : extensions) {
+            ByteBuffer extensionBuffer = JavaVK.stack.UTF8(extension);
+            pDeviceExtensionNames.put(extensionBuffer);
+        }
+
+        pDeviceExtensionNameCount.put(2);
+
+        VkPhysicalDeviceFeatures physicalDeviceFeatures = VkPhysicalDeviceFeatures.calloc(JavaVK.stack);
+        VkDeviceCreateInfo deviceCreateInfo = VkDeviceCreateInfo.calloc(JavaVK.stack)
+            .set(VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, 
+                 VK_NULL_HANDLE, 
+                 0, 
+                 queueCreateInfos, pDeviceExtensionNames, pDeviceExtensionNameCount, physicalDeviceFeatures);
+        
+        PointerBuffer pDevice = MemoryUtil.memAllocPointer(1);
+
+        if (vkCreateDevice(JavaVK.context.physicalDevice, deviceCreateInfo, null, pDevice) != VK_SUCCESS) {
+            throw new RuntimeException();
+        }
+
+        JavaVK.context.device = new VkDevice(pDevice.get(0), JavaVK.context.physicalDevice, deviceCreateInfo);
     }
 }
